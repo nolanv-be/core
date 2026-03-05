@@ -212,6 +212,8 @@ impl Stmt {
             input.parse().map(Self::Revert)
         } else if lookahead.peek(kw::assembly) {
             input.parse().map(Self::Assembly)
+        } else if lookahead.peek(kw::delete) {
+            input.parse().map(Self::Expr)
         } else {
             StmtVarDecl::parse_or_expr(input)
         }
