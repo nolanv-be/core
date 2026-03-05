@@ -1,6 +1,6 @@
 use crate::{Spanned, YulIdent};
 use proc_macro2::Span;
-use std::fmt;
+use std::{fmt, ops::Deref};
 use syn::{
     Result, Token,
     parse::{Parse, ParseStream},
@@ -14,6 +14,14 @@ use syn::{
 /// <https://docs.soliditylang.org/en/latest/grammar.html#a4.SolidityParser.yulPath>
 #[derive(Clone)]
 pub struct YulPath(Punctuated<YulIdent, Token![.]>);
+
+impl Deref for YulPath {
+    type Target = Punctuated<YulIdent, Token![.]>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Parse for YulPath {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
