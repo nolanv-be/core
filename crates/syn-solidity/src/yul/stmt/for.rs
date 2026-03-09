@@ -13,11 +13,11 @@ use syn::{
 /// breakdown of parts: <https://docs.soliditylang.org/en/latest/yul.html#loops>
 #[derive(Clone)]
 pub struct YulFor {
-    for_token: Token![for],
-    initialization: YulBlock,
-    condition: YulExpr,
-    post_iteration: YulBlock,
-    body: YulBlock,
+    pub for_token: Token![for],
+    pub initialization: YulBlock,
+    pub condition: YulExpr,
+    pub post_iteration: YulBlock,
+    pub body: YulBlock,
 }
 
 impl Parse for YulFor {
