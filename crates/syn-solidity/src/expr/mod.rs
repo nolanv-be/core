@@ -6,7 +6,7 @@ use std::fmt;
 use syn::{
     Result, Token,
     ext::IdentExt,
-    parse::{Parse, ParseStream},
+    parse::{Parse, ParseStream, discouraged::Speculative},
     token::{Brace, Bracket, Paren},
 };
 
@@ -130,18 +130,7 @@ impl Parse for Expr {
         // skip any attributes
         let _ = input.call(syn::Attribute::parse_outer)?;
 
-        debug!("  > Expr: {:?}", input.to_string());
-        let mut expr = Self::parse_simple(input)?;
-        debug!("  < Expr: {expr:?}");
-        loop {
-            let (new, cont) = Self::parse_nested(expr, input)?;
-            if cont {
-                debug!(" << Expr: {new:?}");
-                expr = new;
-            } else {
-                return Ok(new);
-            }
-        }
+        Self::parse_bp(input, 0)
     }
 }
 
@@ -211,6 +200,96 @@ impl Expr {
         None
     }
 
+    /// Pratt parser: parses an expression respecting operator precedence.
+    ///
+    /// `min_bp` is the minimum (left) binding power an infix/postfix operator
+    /// must have for it to be consumed at this level.
+    pub(crate) fn parse_bp(input: ParseStream<'_>, min_bp: u8) -> Result<Self> {
+        debug!("  > Expr: {:?}", input.to_string());
+        let mut expr = Self::parse_simple(input)?;
+        debug!("  < Expr: {expr:?}");
+        loop {
+            let (new, cont) = Self::parse_nested_bp(expr, input, min_bp)?;
+            if cont {
+                debug!(" << Expr: {new:?}");
+                expr = new;
+            } else {
+                return Ok(new);
+            }
+        }
+    }
+
+    /// Parse an expression that starts with an expression, respecting
+    /// operator precedence via binding power.
+    ///
+    /// Returns `(ParseResult, continue_parsing)`
+    fn parse_nested_bp(expr: Self, input: ParseStream<'_>, min_bp: u8) -> Result<(Self, bool)> {
+        macro_rules! parse {
+            (break) => {
+                Ok((expr, false))
+            };
+
+            ($map:expr) => {
+                ParseNested::parse_nested(expr.into(), input).map(|e| ($map(e), true))
+            };
+        }
+
+        let lookahead = input.lookahead1();
+        if lookahead.peek(Bracket) {
+            parse!(Self::Index)
+        } else if lookahead.peek(Brace) {
+            // Special case: `try` stmt block
+            if input.peek2(kw::catch) { parse!(break) } else { parse!(Self::CallOptions) }
+        } else if lookahead.peek(Paren) {
+            parse!(Self::Call)
+        } else if lookahead.peek(Token![.]) {
+            parse!(Self::Member)
+        } else if lookahead.peek(Token![?]) {
+            // Ternary (Solidity precedence 14, right-associative)
+            // l_bp = 4, r_bp = 3
+            if 4 < min_bp {
+                parse!(break)
+            } else {
+                let cond = Box::new(expr);
+                let question_token = input.parse()?;
+                // Between ? and : any expression is valid (: acts as delimiter).
+                let if_true = Box::new(Self::parse_bp(input, 0)?);
+                let colon_token = input.parse()?;
+                // r_bp = 3 gives right-associativity for nested ternaries.
+                let if_false = Box::new(Self::parse_bp(input, 3)?);
+                Ok((
+                    Self::Ternary(ExprTernary {
+                        cond,
+                        question_token,
+                        if_true,
+                        colon_token,
+                        if_false,
+                    }),
+                    true,
+                ))
+            }
+        } else if PostUnOp::peek(input, &lookahead) {
+            // Postfix increment/decrement (Solidity precedence 1, tightest)
+            // l_bp = 27
+            if 27 < min_bp { parse!(break) } else { parse!(Self::Postfix) }
+        } else if BinOp::peek(input, &lookahead) {
+            // Binary operator – fork to read the operator and its binding
+            // power *before* deciding whether to consume it.
+            let fork = input.fork();
+            let op: BinOp = fork.parse()?;
+            let (l_bp, r_bp) = op.binding_power();
+            if l_bp < min_bp {
+                // Operator binds too loosely for this level – stop here.
+                Ok((expr, false))
+            } else {
+                input.advance_to(&fork);
+                let right = Box::new(Self::parse_bp(input, r_bp)?);
+                Ok((Self::Binary(ExprBinary { left: Box::new(expr), op, right }), true))
+            }
+        } else {
+            parse!(break)
+        }
+    }
     fn parse_simple(input: ParseStream<'_>) -> Result<Self> {
         let lookahead = input.lookahead1();
         if lookahead.peek(Paren) {
@@ -243,41 +322,6 @@ impl Expr {
             if ty.is_custom() { Ok(Self::Ident(ident.into())) } else { Ok(Self::Type(ty)) }
         } else {
             Err(lookahead.error())
-        }
-    }
-
-    /// Parse an expression that starts with an expression.
-    ///
-    /// Returns `(ParseResult, continue_parsing)`
-    fn parse_nested(expr: Self, input: ParseStream<'_>) -> Result<(Self, bool)> {
-        macro_rules! parse {
-            (break) => {
-                Ok((expr, false))
-            };
-
-            ($map:expr) => {
-                ParseNested::parse_nested(expr.into(), input).map(|e| ($map(e), true))
-            };
-        }
-
-        let lookahead = input.lookahead1();
-        if lookahead.peek(Bracket) {
-            parse!(Self::Index)
-        } else if lookahead.peek(Brace) {
-            // Special case: `try` stmt block
-            if input.peek2(kw::catch) { parse!(break) } else { parse!(Self::CallOptions) }
-        } else if lookahead.peek(Paren) {
-            parse!(Self::Call)
-        } else if lookahead.peek(Token![.]) {
-            parse!(Self::Member)
-        } else if lookahead.peek(Token![?]) {
-            parse!(Self::Ternary)
-        } else if PostUnOp::peek(input, &lookahead) {
-            parse!(Self::Postfix)
-        } else if BinOp::peek(input, &lookahead) {
-            parse!(Self::Binary)
-        } else {
-            parse!(break)
         }
     }
 }

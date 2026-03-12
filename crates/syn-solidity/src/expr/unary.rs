@@ -15,7 +15,7 @@ pub struct ExprUnary {
 
 impl Parse for ExprUnary {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
-        Ok(Self { op: input.parse()?, expr: input.parse()? })
+        Ok(Self { op: input.parse()?, expr: Box::new(Expr::parse_bp(input, 27)?) })
     }
 }
 
@@ -46,7 +46,7 @@ impl fmt::Debug for ExprDelete {
 
 impl Parse for ExprDelete {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
-        Ok(Self { delete_token: input.parse()?, expr: input.parse()? })
+        Ok(Self { delete_token: input.parse()?, expr: Box::new(Expr::parse_bp(input, 27)?) })
     }
 }
 
